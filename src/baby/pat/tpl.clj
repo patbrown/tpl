@@ -4,29 +4,62 @@
             [selmer.parser]))
 
 (defn-spec <-tpl ::vt/str
-  ([prefix ::vt/str template-id ::vt/kw]
-   (let [name-portion (if (qualified-keyword? template-id)
-                        (str (namespace template-id) "/" (name template-id))
-                        (name template-id))]
-     (slurp (str prefix name-portion)))))
+  "Atoms get deref before processing.    
+   Keywords become paths, before tpls.   
+   Strings are either paths or already a known template."
+  ([template-or-id ::vt/atom-kw-or-str] (<-tpl "" template-or-id))
+  ([prefix ::vt/str template-or-id ::vt/atom-kw-or-str]
+   (let [template-or-id (vt/if-atom-deref template-or-id)
+         name-portion (when (keyword? template-or-id)
+                        (if (qualified-keyword? template-or-id)
+                          (vt/qkw->relative-path template-or-id)
+                          (name template-or-id)))]
+     (if (keyword? template-or-id)
+      ;; Keyword execution
+       (slurp (str prefix name-portion))
+      ;; String execution
+       (if (empty? (selmer.parser/known-variables template-or-id))
+         (slurp (str prefix template-or-id))
+         template-or-id)))))
 
-(defn-spec <-tpl-vars ::vt/any
-  ([prefix ::vt/str template-id ::vt/kw]
-   (selmer.parser/known-variables (<-tpl prefix template-id))))
+(defn-spec <-tpl-keys ::vt/any
+  "Returns the known keys from template."
+  ([template-or-id ::vt/atom-kw-or-str] (<-tpl-keys "" template-or-id))
+  ([prefix ::vt/str template-or-id ::vt/atom-kw-or-str]
+   (selmer.parser/known-variables (<-tpl prefix (vt/if-atom-deref template-or-id)))))
 
 (defn-spec render ::vt/str
-  ([prefix ::vt/str tpl ::vt/kw-or-str replacements ::vt/map]
-   (selmer.parser/render (if (string? tpl)
-                             tpl
-                             (<-tpl prefix tpl)) replacements)))
-
-(def tpl-functions {:tpl/<-tpl <-tpl
-                    :tpl/<-tpl-vars <-tpl-vars
-                    :tpl/render render})
+  "Renders templates with replacement values. Does it's best."
+  ([tpl ::vt/atom-kw-or-str replacements ::vt/atom-kw-map-or-str] (render "" tpl replacements))
+  ([prefix ::vt/str tpl ::vt/atom-kw-or-str replacements ::vt/atom-kw-map-or-str]
+   (let [access (fn [path] (-> path slurp clojure.edn/read-string))
+         tpl (vt/if-atom-deref tpl)
+         replacements (vt/if-atom-deref replacements)
+         replacements (if (map? replacements) replacements
+                          (if (string? replacements)
+                            (access replacements)
+                            (access (vt/qkw->relative-path replacements))))]
+     (selmer.parser/render (if (string? tpl)
+                           ;; string execution
+                             (if (empty? (selmer.parser/known-variables tpl))
+                               (<-tpl prefix tpl)
+                               tpl)
+                             ;; kw execution
+                             (<-tpl prefix tpl)) replacements))))
 
 (comment
-  (render {:tpl/id :tpl/shell-command-generic-kaocha-invocation
-           :kaocha-runner/file-name "sex" :test-config/id "love"})
-  (render :tpl/shell-command-generic-kaocha-invocation {:kaocha-runner/file-name "sex" :test-config/id "love"})
-;
+
+;;(render "Hello {{name}}!" {:name "Angelica"})
+;; (spit "delete-me"  "Hello {{name}}!")
+
+;; (render :delete-me {:name "Rita"})
+;; (spit "bin/resources/delete-me"  "Hello {{name}}!")
+;; (spit "bin/use-me" {:name "frank"})
+;; (render :bin.resources/delete-me {:name "Lila"})
+;; (render :bin.resources/delete-me "bin/use-me")
+;; (render :bin.resources/delete-me :bin/use-me)
+;; (render "Hello {{name}}!" :bin/use-me)
+;; (render "bin/resources/delete-me" "bin/use-me")
+  
+  ;
   )
